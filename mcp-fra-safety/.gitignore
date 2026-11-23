@@ -1,0 +1,16 @@
+# Local environment & credentials
+.env
+.env.*
+!.env.example
+
+# Generated artifacts & scratch directories
+*.pdf
+eval/results.json
+misc/
+
+# Python cache & virtual environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+notebooks/03_helper_remove*

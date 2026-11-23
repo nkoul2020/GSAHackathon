@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-fra-safety"
+version = "0.1.0"
+description = "GSA Hackathon Dataset Access MCP Server for Federal Railroad Administration (FRA) Safety Data"
+requires-python = ">=3.10"
+dependencies = [
+    "fastmcp>=2.10.0",
+    "databricks-sql-connector>=3.4.0",
+    "databricks-sdk>=0.32.0",
+    "pydantic>=2.7.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "--assert=plain -p no:cacheprovider"

@@ -1,0 +1,17 @@
+command:
+  - "uvicorn"
+  - "deploy.databricks.app:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
+
+env:
+  - name: PYTHONPATH
+    value: "src"
+  - name: DATABRICKS_WAREHOUSE_ID
+    valueFrom: sql-warehouse
+  - name: FRA_CATALOG
+    value: "users"
+  - name: FRA_SCHEMA
+    value: "neeraj_koul"
