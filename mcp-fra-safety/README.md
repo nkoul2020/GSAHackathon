@@ -50,7 +50,7 @@ To maintain 100% numeric parity with official FRA Open Data portals (`dsuf-xcni`
 | **Joint-Operations Cause Audit** *(`audit_joint_track_cause_discrepancies`)* | Self-join on `incidentkey` (`p.jointcd = '1'` vs. `s.jointcd IN ('2', '3')`) | Evaluates carrier filters across both primary (`p`) and secondary (`s`) filings so discrepancies are captured regardless of which railroad received `jointcd = '1'`. |
 
 ### Verified Portal Parity Benchmark (BNSF Parent Railroad, Report 3.10)
-Validated against FRA Portal `wjun-6kqb` (Report 3.10 — Train Accidents Including Highway-Rail Crossings, `parent_railroad_code = "BNSF"`):
+Validated against FRA Portal `wjun-6kqb` (Report 3.10 — Train Accidents Including Highway-Rail Crossings, `parent_railroad_code = "BNSF"`) (Note: this is as of 11/23/2026--> Numbers change our time as submissions may come late):
 
 | Calendar Year | Strict `jointcd = '1'` Only (Legacy) | All Carrier `jointcd` (`1`, `2`, `3`) (`v0.2.0-fra-parity`) | Official FRA Portal Value |
 | :--- | :---: | :---: | :---: |
