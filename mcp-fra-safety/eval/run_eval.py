@@ -1,187 +1,207 @@
 import asyncio
-import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor
 import json
-import os
 from pathlib import Path
 import sys
 import time
-from typing import Any, Dict, List
-
-sys.dont_write_bytecode = True
-
-REPO_ROOT = Path(__file__).resolve().parents[1]
-SRC_PATH = str(REPO_ROOT / "src")
-if SRC_PATH not in sys.path:
-    sys.path.insert(0, SRC_PATH)
+from typing import Any, Dict, List, Tuple
 
 from fastmcp import Client
-from fra_safety_mcp.server import mcp
 
-DATASET_PATH = Path(__file__).resolve().parent / "dataset.jsonl"
-RESULTS_PATH = Path(__file__).resolve().parent / "results.json"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+SRC_DIR = PROJECT_ROOT / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+import fra_safety_mcp.server as server_mod  # noqa: E402
 
 
-def _get_nested(payload: Dict[str, Any], dotted_path: str) -> Any:
-    cur: Any = payload
+def _resolve_server() -> Any:
+    if hasattr(server_mod, "create_server"):
+        return server_mod.create_server()
+    if hasattr(server_mod, "mcp"):
+        return server_mod.mcp
+    raise RuntimeError("Could not find `create_server` or `mcp` in `fra_safety_mcp.server`.")
+
+
+def _extract_tool_payload(call_result: Any) -> Dict[str, Any]:
+    """Normalizes FastMCP CallToolResult objects across FastMCP versions."""
+    if isinstance(call_result, dict):
+        return call_result
+    data = getattr(call_result, "data", None)
+    if isinstance(data, dict):
+        return data
+    content = getattr(call_result, "content", None) or []
+    for block in content:
+        text = getattr(block, "text", None)
+        if isinstance(text, str) and text.strip():
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                return {"raw_text": text}
+    return {}
+
+
+def _get_by_path(data: Any, dotted_path: str) -> Tuple[bool, Any]:
+    """Traverses a dot-separated key path (e.g. 'grand_total.deduplicated_grand_total_accidents')."""
+    curr = data
     for part in dotted_path.split("."):
-        if not isinstance(cur, dict) or part not in cur:
-            return "__MISSING__"
-        cur = cur[part]
-    return cur
+        if isinstance(curr, dict) and part in curr:
+            curr = curr[part]
+        elif isinstance(curr, list) and part.isdigit() and int(part) < len(curr):
+            curr = curr[int(part)]
+        else:
+            return False, None
+    return True, curr
 
 
-def _validate_case(case: Dict[str, Any], data: Dict[str, Any]) -> List[str]:
-    errors: List[str] = []
-    if not isinstance(data, dict):
-        return [f"Expected dict response, got {type(data).__name__}"]
-    if "error" in data:
-        return [f"Tool returned error: {data.get('error')} (hint: {data.get('hint', '')})"]
+def _evaluate_checks(payload: Dict[str, Any], checks: Dict[str, Any]) -> List[str]:
+    """Validates a tool response payload against declarative assertions in dataset.jsonl."""
+    failures: List[str] = []
+    required_keys: List[str] = checks.get("required_keys", [])
 
-    checks = case.get("checks", {})
+    # Treat top-level tool errors as failures unless the test explicitly expects an "error" key
+    if isinstance(payload, dict) and "error" in payload and "error" not in required_keys:
+        hint = payload.get("hint", "")
+        hint_suffix = f" (hint: {hint})" if hint else ""
+        return [f"Tool returned error: {payload['error']}{hint_suffix}"]
 
-    for key in checks.get("required_keys", []):
-        if key not in data:
-            errors.append(f"Missing required key '{key}'")
+    for key in required_keys:
+        if key not in payload:
+            failures.append(f"Missing required key: '{key}'")
 
     for path in checks.get("not_null_paths", []):
-        val = _get_nested(data, path)
-        if val in ("__MISSING__", None):
-            errors.append(f"Expected '{path}' to be non-null, got {val}")
+        exists, val = _get_by_path(payload, path)
+        if not exists or val is None:
+            failures.append(f"Expected non-null value at '{path}', got {val!r}")
 
     for path in checks.get("null_paths", []):
-        val = _get_nested(data, path)
-        if val is not None:
-            errors.append(f"Expected '{path}' to be None (FRA geographic blank rule), got {val}")
+        exists, val = _get_by_path(payload, path)
+        if not exists or val is not None:
+            failures.append(f"Expected None/null at '{path}', got {val!r}")
 
     for path, expected in checks.get("equals", {}).items():
-        val = _get_nested(data, path)
-        if val != expected:
-            errors.append(f"Expected '{path}' == {expected!r}, got {val!r}")
+        exists, actual = _get_by_path(payload, path)
+        if not exists or actual != expected:
+            failures.append(f"Mismatch at '{path}': expected {expected!r}, got {actual!r}")
 
-    for path, substr in checks.get("contains_text", {}).items():
-        val = str(_get_nested(data, path))
-        if substr not in val:
-            errors.append(f"Expected '{substr}' inside '{path}', got {val!r}")
-
-    for path in checks.get("non_empty_list", []):
-        val = _get_nested(data, path)
-        if not isinstance(val, list) or len(val) == 0:
-            errors.append(f"Expected non-empty list at '{path}', got {type(val).__name__}")
-
-    if checks.get("table2_overlap_check"):
-        breakdown = data.get("breakdown", [])
-        gt = data.get("grand_total", {}).get("deduplicated_grand_total_accidents", 0)
-        row_sum = sum(int(r.get("accident_count", 0)) for r in breakdown)
-        if row_sum < int(gt):
-            errors.append(
-                f"Table 2 railroad sum ({row_sum}) should be >= deduplicated grand total ({gt})"
+    for path, expected_sub in checks.get("contains_text", {}).items():
+        exists, actual = _get_by_path(payload, path)
+        if not exists or str(expected_sub) not in str(actual):
+            failures.append(
+                f"Expected substring {expected_sub!r} at '{path}', got {actual!r}"
             )
 
-    return errors
+    for path in checks.get("non_empty_list", []):
+        exists, val = _get_by_path(payload, path)
+        if not exists or not isinstance(val, list) or len(val) == 0:
+            failures.append(f"Expected non-empty list at '{path}', got {type(val).__name__} (len={len(val) if isinstance(val, list) else 'N/A'})")
+
+    if checks.get("table2_overlap_check"):
+        breakdown = payload.get("breakdown", [])
+        grand_total = payload.get("grand_total", {})
+        dedup_total = int(grand_total.get("deduplicated_grand_total_accidents", 0) or 0)
+        carrier_sum = sum(int(row.get("accident_count", 0) or 0) for row in breakdown)
+        if carrier_sum <= dedup_total:
+            failures.append(
+                f"Table 2 overlap check failed: sum of carrier involvements ({carrier_sum}) "
+                f"must exceed deduplicated grand total ({dedup_total})"
+            )
+
+    return failures
 
 
 async def _execute_eval_async() -> Dict[str, Any]:
+    dataset_path = Path(__file__).resolve().parent / "dataset.jsonl"
     cases = [
         json.loads(line)
-        for line in DATASET_PATH.read_text(encoding="utf-8").splitlines()
+        for line in dataset_path.read_text(encoding="utf-8").splitlines()
         if line.strip()
     ]
 
-    case_results: List[Dict[str, Any]] = []
-    start_all = time.perf_counter()
-
-    async with Client(mcp) as client:
-        # 1. Verify all 6 Resources return substantive 49 CFR Part 225 guidance
-        resources = await client.list_resources()
-        resource_checks = []
-        for res in resources:
-            uri = str(res.uri)
-            content = await client.read_resource(uri)
-            text_len = sum(len(getattr(item, "text", "")) for item in content)
-            resource_checks.append({"uri": uri, "bytes": text_len, "passed": text_len > 100})
-
-        # 2. Verify all 4 Prompts render cleanly with test arguments
-        prompt_args_map = {
-            "metro_safety_audit_briefing": {"city": "Chicago", "state": "IL"},
-            "railroad_system_safety_scorecard": {"parent_railroad_code": "CN"},
-            "grade_crossing_hotspot_audit": {"state": "TX"},
-            "joint_track_discrepancy_review": {"state": "IL"},
-        }
-        prompts = await client.list_prompts()
-        prompt_checks = []
-        for prm in prompts:
-            p_res = await client.get_prompt(prm.name, prompt_args_map.get(prm.name, {}))
-            msg_count = len(p_res.messages)
-            prompt_checks.append({"name": prm.name, "messages": msg_count, "passed": msg_count >= 1})
-
-        # 3. Execute all 12 Tool benchmark cases
-        for case in cases:
-            t0 = time.perf_counter()
-            raw_res = await client.call_tool(case["tool"], case["args"])
-            elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
-            data = raw_res.data if isinstance(raw_res.data, dict) else {}
-            failures = _validate_case(case, data)
-            passed = len(failures) == 0
-
-            case_results.append({
-                "id": case["id"],
-                "category": case["category"],
-                "tool": case["tool"],
-                "latency_ms": elapsed_ms,
-                "passed": passed,
-                "failures": failures,
-            })
-            status = "PASS" if passed else "FAIL"
-            print(f"[{status}] {case['id']} ({elapsed_ms} ms)")
-            if failures:
-                for f in failures:
-                    print(f"       -> {f}")
-
-    total_elapsed_s = round(time.perf_counter() - start_all, 2)
-    passed_cases = sum(1 for r in case_results if r["passed"])
-    passed_resources = sum(1 for r in resource_checks if r["passed"])
-    passed_prompts = sum(1 for r in prompt_checks if r["passed"])
-
-    summary = {
-        "server": "mcp-fra-safety",
-        "total_duration_s": total_elapsed_s,
-        "tool_cases_passed": passed_cases,
-        "tool_cases_total": len(case_results),
-        "tool_pass_rate_pct": round((passed_cases / max(1, len(case_results))) * 100, 1),
-        "avg_tool_latency_ms": round(
-            sum(r["latency_ms"] for r in case_results) / max(1, len(case_results)), 1
-        ),
-        "resources_passed": passed_resources,
-        "resources_total": len(resource_checks),
-        "prompts_passed": passed_prompts,
-        "prompts_total": len(prompt_checks),
-        "resource_details": resource_checks,
-        "prompt_details": prompt_checks,
-        "case_results": case_results,
+    prompt_args_map: Dict[str, Dict[str, Any]] = {
+        "metro_safety_audit_briefing": {"city": "Chicago", "state": "IL"},
+        "railroad_system_safety_scorecard": {"parent_railroad_code": "BNSF"},
+        "railroad_workforce_and_safety_briefing": {"parent_railroad_code": "BNSF"},
+        "grade_crossing_hotspot_audit": {"state": "TX"},
+        "joint_track_discrepancy_review": {"state": "IL"},
     }
 
-    try:
-        RESULTS_PATH.write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    except OSError:
-        Path("/tmp/mcp_fra_safety_eval_results.json").write_text(
-            json.dumps(summary, indent=2), encoding="utf-8"
-        )
+    mcp_server = _resolve_server()
+    results: List[Dict[str, Any]] = []
 
-    return summary
+    async with Client(mcp_server) as client:
+        # 1. Verify MCP Resources
+        resources = await client.list_resources()
+        for res in resources:
+            await client.read_resource(res.uri)
+        print(f"Verified {len(resources)} MCP resources.")
+
+        # 2. Verify MCP Prompts
+        prompts = await client.list_prompts()
+        for prm in prompts:
+            p_res = await client.get_prompt(prm.name, prompt_args_map.get(prm.name, {}))
+            if not getattr(p_res, "messages", None):
+                raise AssertionError(f"Prompt '{prm.name}' rendered empty messages.")
+        print(f"Verified {len(prompts)} MCP prompts.\n")
+
+        # 3. Execute Benchmark Tool Cases
+        for case in cases:
+            case_id = case["id"]
+            tool_name = case["tool"]
+            args = case.get("args", {})
+            checks = case.get("checks", {})
+
+            t0 = time.perf_counter()
+            raw_res = await client.call_tool(tool_name, args)
+            elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
+
+            payload = _extract_tool_payload(raw_res)
+            failures = _evaluate_checks(payload, checks)
+            passed = len(failures) == 0
+
+            if passed:
+                print(f"[PASS] {case_id} ({elapsed_ms} ms)")
+            else:
+                print(f"[FAIL] {case_id} ({elapsed_ms} ms)")
+                for msg in failures:
+                    print(f"       -> {msg}")
+
+            results.append({
+                "id": case_id,
+                "category": case.get("category", ""),
+                "tool": tool_name,
+                "passed": passed,
+                "elapsed_ms": elapsed_ms,
+                "failures": failures,
+            })
+
+    passed_count = sum(1 for r in results if r["passed"])
+    total_count = len(results)
+    print(f"\nEvaluation Summary: {passed_count}/{total_count} passed.")
+
+    report = {
+        "passed": passed_count,
+        "total": total_count,
+        "all_passed": passed_count == total_count,
+        "results": results,
+    }
+    report_path = Path(__file__).resolve().parent / "eval_report.json"
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    if passed_count != total_count:
+        raise SystemExit(1)
+
+    return report
 
 
 def run_benchmark() -> Dict[str, Any]:
-    """Notebook-safe and CLI-safe entrypoint for running the full MCP evaluation suite."""
-    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+    """Runs the async eval suite in a dedicated thread so it works inside Databricks notebooks."""
+    with ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(asyncio.run, _execute_eval_async()).result()
 
 
 if __name__ == "__main__":
-    report = run_benchmark()
-    print(
-        f"\nBenchmark Complete: {report['tool_cases_passed']}/{report['tool_cases_total']} tool cases "
-        f"({report['tool_pass_rate_pct']}%), {report['resources_passed']}/{report['resources_total']} resources, "
-        f"{report['prompts_passed']}/{report['prompts_total']} prompts in {report['total_duration_s']}s."
-    )
-    if report["tool_cases_passed"] < report["tool_cases_total"]:
-        sys.exit(1)
+    run_benchmark()

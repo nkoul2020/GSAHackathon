@@ -53,6 +53,7 @@ def register(mcp: FastMCP) -> None:
         filtered by `state`, `railroad_code`, `parent_railroad_code`, and year range.
         """
         safe_limit = max(1, min(int(limit), 50))
+        has_carrier_filter = bool(railroad_code or parent_railroad_code)
         fq54 = config.fq_table(config.form_54_table)
         fq55a = config.fq_table(config.form_55a_table)
         fq57 = config.fq_table(config.form_57_table)
@@ -133,7 +134,8 @@ def register(mcp: FastMCP) -> None:
                     start_year, end_year, year_type,
                 )
                 f54_where.append(t54)
-                f54_where.append(f"TRIM(CAST({jcd54} AS STRING)) = '1'")
+                if not has_carrier_filter:
+                    f54_where.append(f"TRIM(CAST({jcd54} AS STRING)) = '1'")
                 if only_multi_form:
                     f54_where.append(
                         f"(COALESCE(CAST({k54} AS INT), 0) + COALESCE(CAST({i54} AS INT), 0) > 0 "
@@ -337,11 +339,11 @@ def register(mcp: FastMCP) -> None:
     ) -> Dict[str, Any]:
         """
         Executes a governed read-only SQL query (`SELECT` or `WITH`) in Databricks Unity Catalog
-        across `form_54_accidents`, `form_55a_casualties`, `form_57_crossings`, and
-        `form_55_operational` (`users.neeraj_koul`).
+        across `form_54_accidents`, `form_55a_casualties`, `form_57_crossings`,
+        `form_55_operational`, and `stb_1246_employment` (`users.neeraj_koul`).
 
-        Supports multi-table JOINs walking across Forms 54, 55a, 57, and 55. Write/DDL statements
-        are blocked and output rows are capped at `limit` (max 1000).
+        Supports multi-table JOINs walking across Forms 54, 55a, 57, 55, and STB employment.
+        Write/DDL statements are blocked and output rows are capped at `limit` (max 1000).
         """
         raw_sql = (sql or "").strip().rstrip(";").strip()
         if not raw_sql:
@@ -376,7 +378,7 @@ def register(mcp: FastMCP) -> None:
         lower_sql = cleaned.lower()
         if not any(tbl in lower_sql for tbl in allowed_tables):
             return {
-                "error": "Query must reference at least one FRA table in users.neeraj_koul.",
+                "error": "Query must reference at least one FRA or STB table in users.neeraj_koul.",
                 "hint": f"Allowed tables: {sorted(list(allowed_tables))}",
             }
 

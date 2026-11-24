@@ -23,6 +23,13 @@ def register(mcp: FastMCP) -> None:
         city: Optional[str] = None,
     ) -> Dict[str, Any]:
         has_geo_filter = bool(state or county or city)
+        has_carrier_filter = any([
+            railroad_code,
+            parent_railroad_code,
+            railroad_class,
+            railroad_group,
+            smt,
+        ])
         params: Dict[str, Any] = {}
 
         try:
@@ -48,25 +55,27 @@ def register(mcp: FastMCP) -> None:
             )
             f54_excl = build_form54_filters(c54, "f", "x54", params, include_crossings=False)
 
+            jcd_guard = "1=1" if has_carrier_filter else f"TRIM(CAST({jcd_col} AS STRING)) = '1'"
+
             q54 = f"""
             SELECT
-                COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1' THEN {inc_col} END) AS train_accidents,
-                COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1'
-                    AND (TRIM(CAST({typ_code_col} AS STRING)) = '1' OR UPPER(CAST({typ_text_col} AS STRING)) LIKE '%DERAIL%')
+                COUNT(DISTINCT CASE WHEN {jcd_guard} THEN {inc_col} END) AS train_accidents,
+                COUNT(DISTINCT CASE WHEN {jcd_guard}
+                    AND (TRIM(CAST({typ_code_col} AS STRING)) IN ('1', '01') OR UPPER(CAST({typ_text_col} AS STRING)) LIKE '%DERAIL%')
                     THEN {inc_col} END) AS derailments,
-                COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1'
-                    AND (TRIM(CAST({typ_code_col} AS STRING)) IN ('2','3','4','5','6') OR UPPER(CAST({typ_text_col} AS STRING)) LIKE '%COLLISION%')
+                COUNT(DISTINCT CASE WHEN {jcd_guard}
+                    AND (TRIM(CAST({typ_code_col} AS STRING)) IN ('2','3','4','5','6','02','03','04','05','06') OR UPPER(CAST({typ_text_col} AS STRING)) LIKE '%COLLISION%')
                     THEN {inc_col} END) AS collisions,
-                COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1' AND UPPER(TRIM(CAST({cau_col} AS STRING))) LIKE 'H%' THEN {inc_col} END) AS cause_human_factor,
-                COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1' AND UPPER(TRIM(CAST({cau_col} AS STRING))) LIKE 'T%' THEN {inc_col} END) AS cause_track,
-                COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1' AND UPPER(TRIM(CAST({cau_col} AS STRING))) LIKE 'E%' THEN {inc_col} END) AS cause_mechanical,
-                COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1' AND UPPER(TRIM(CAST({cau_col} AS STRING))) LIKE 'S%' THEN {inc_col} END) AS cause_signal,
-                COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1' AND UPPER(TRIM(CAST({cau_col} AS STRING))) LIKE 'M%' THEN {inc_col} END) AS cause_misc,
-                COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1'
-                    AND (TRIM(CAST({trk_code_col} AS STRING)) = '1' OR UPPER(CAST({trk_text_col} AS STRING)) LIKE '%MAIN%')
+                COUNT(DISTINCT CASE WHEN {jcd_guard} AND UPPER(TRIM(CAST({cau_col} AS STRING))) LIKE 'H%' THEN {inc_col} END) AS cause_human_factor,
+                COUNT(DISTINCT CASE WHEN {jcd_guard} AND UPPER(TRIM(CAST({cau_col} AS STRING))) LIKE 'T%' THEN {inc_col} END) AS cause_track,
+                COUNT(DISTINCT CASE WHEN {jcd_guard} AND UPPER(TRIM(CAST({cau_col} AS STRING))) LIKE 'E%' THEN {inc_col} END) AS cause_mechanical,
+                COUNT(DISTINCT CASE WHEN {jcd_guard} AND UPPER(TRIM(CAST({cau_col} AS STRING))) LIKE 'S%' THEN {inc_col} END) AS cause_signal,
+                COUNT(DISTINCT CASE WHEN {jcd_guard} AND UPPER(TRIM(CAST({cau_col} AS STRING))) LIKE 'M%' THEN {inc_col} END) AS cause_misc,
+                COUNT(DISTINCT CASE WHEN {jcd_guard}
+                    AND (TRIM(CAST({trk_code_col} AS STRING)) IN ('1', '01') OR UPPER(CAST({trk_text_col} AS STRING)) LIKE '%MAIN%')
                     THEN {inc_col} END) AS track_main_line,
-                COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1'
-                    AND (TRIM(CAST({trk_code_col} AS STRING)) = '2' OR UPPER(CAST({trk_text_col} AS STRING)) LIKE '%YARD%')
+                COUNT(DISTINCT CASE WHEN {jcd_guard}
+                    AND (TRIM(CAST({trk_code_col} AS STRING)) IN ('2', '02') OR UPPER(CAST({trk_text_col} AS STRING)) LIKE '%YARD%')
                     THEN {inc_col} END) AS track_yard,
                 COALESCE(SUM(CAST({dmg_col} AS DOUBLE)), 0) AS total_damage_cost,
                 COALESCE(SUM(CAST({haz_col} AS INT)), 0) AS hazmat_cars_damaged_derailed

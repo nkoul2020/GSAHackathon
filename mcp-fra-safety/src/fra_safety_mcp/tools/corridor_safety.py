@@ -23,6 +23,8 @@ def register(mcp: FastMCP) -> None:
                 "hint": "Example: cities=['Chicago'] or cities=['Newark', 'Jersey City']",
             }
 
+        has_carrier_filter = bool(railroad_code or parent_railroad_code)
+
         try:
             c54 = get_table_columns(config.form_54_table)
             c57 = get_table_columns(config.form_57_table)
@@ -31,6 +33,12 @@ def register(mcp: FastMCP) -> None:
             inc_col = resolve_col(c54, "f", ("incident_key", "accident_number"))
             jcd_col = resolve_col(c54, "f", ("joint_cd", "joint_code"))
             dmg_col = resolve_col(c54, "f", ("total_damage_cost", "equipment_damage_cost"), fallback_sql="0")
+
+            count_expr = (
+                f"COUNT(DISTINCT {inc_col})"
+                if has_carrier_filter
+                else f"COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1' THEN {inc_col} END)"
+            )
 
             k57_col = resolve_col(c57, "c", ("total_killed_form57", "crossing_users_killed", "total_killed"), fallback_sql="0")
             i57_col = resolve_col(c57, "c", ("total_injured_form57", "crossing_users_injured", "total_injured"), fallback_sql="0")
@@ -61,7 +69,7 @@ def register(mcp: FastMCP) -> None:
 
                 q54 = f"""
                 SELECT
-                    COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1' THEN {inc_col} END) AS train_accidents,
+                    {count_expr} AS train_accidents,
                     COALESCE(SUM(CAST({dmg_col} AS DOUBLE)), 0) AS total_damage_cost
                 FROM {config.fq_table(config.form_54_table)} f
                 WHERE {t54} {f54_common} {f54_excl}

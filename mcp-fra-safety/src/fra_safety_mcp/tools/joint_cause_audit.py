@@ -19,7 +19,7 @@ def register(mcp: FastMCP) -> None:
         limit: int = 25,
     ) -> Dict[str, Any]:
         """
-        Self-joins Form 54 multi-railroad collisions on `incidentkey` (`jointcd = '1'` vs `'2'`)
+        Self-joins Form 54 multi-railroad filings on `incidentkey` (`jointcd = '1'` vs `'2'`/`'3'`)
         in Unity Catalog to surface conflicting Appendix C primary cause codes and reported train
         speeds between the primary and secondary railroads involved in the same accident.
         """
@@ -43,6 +43,7 @@ def register(mcp: FastMCP) -> None:
             spd_s = resolve_col(c54, "s", ("train_speed", "recorded_estimated_speed"), fallback_sql="NULL")
             dmg_p = resolve_col(c54, "p", ("total_damage_cost", "equipment_damage_cost"), fallback_sql="0")
             dmg_s = resolve_col(c54, "s", ("total_damage_cost", "equipment_damage_cost"), fallback_sql="0")
+            jtrk_p = resolve_col(c54, "p", ("joint_track_type",), fallback_sql="''")
             st_p = resolve_col(c54, "p", ("state_abbr", "state_name", "state_code"), fallback_sql="''")
             city_p = resolve_col(c54, "p", ("station", "city_name"), fallback_sql="''")
             dt_p = resolve_col(c54, "p", ("date",), fallback_sql="''")
@@ -53,41 +54,64 @@ def register(mcp: FastMCP) -> None:
                 ("year", "accident_year", "year4", "iyr"), ("accident_month", "imo", "month"), ("date",),
                 start_year, end_year, year_type,
             )
-            f54_common = build_common_filters(
-                c54, "p", "c54", params, True, state, None, None, None, None,
-                railroad_code, parent_railroad_code, None, None,
+
+            f54_geo = build_common_filters(
+                c54, "p", "c54_geo", params, True, state, None, None, None, None,
+                None, None, None, None,
             )
 
+            carrier_clauses = []
+            if railroad_code:
+                params["c54_rr"] = railroad_code.strip().upper()
+                carrier_clauses.append(
+                    f"(UPPER(TRIM(CAST({rr_p} AS STRING))) = :c54_rr "
+                    f"OR UPPER(TRIM(CAST({rr_s} AS STRING))) = :c54_rr)"
+                )
+            if parent_railroad_code:
+                pr_p = resolve_col(c54, "p", ("reporting_parent_railroad_code", "parent_railroad_code"))
+                pr_s = resolve_col(c54, "s", ("reporting_parent_railroad_code", "parent_railroad_code"))
+                params["c54_prr"] = parent_railroad_code.strip().upper()
+                carrier_clauses.append(
+                    f"(UPPER(TRIM(CAST({pr_p} AS STRING))) = :c54_prr "
+                    f"OR UPPER(TRIM(CAST({pr_s} AS STRING))) = :c54_prr)"
+                )
+            f54_carrier = f"AND {' AND '.join(carrier_clauses)}" if carrier_clauses else ""
+
+            norm_cau_p = f"COALESCE(UPPER(TRIM(CAST({cau_p} AS STRING))), '')"
+            norm_cau_s = f"COALESCE(UPPER(TRIM(CAST({cau_s} AS STRING))), '')"
             mismatch_clause = (
-                f"AND UPPER(TRIM(CAST({cau_p} AS STRING))) != UPPER(TRIM(CAST({cau_s} AS STRING)))"
+                f"AND {norm_cau_p} != '' AND {norm_cau_s} != '' AND {norm_cau_p} != {norm_cau_s}"
                 if only_mismatched_causes
                 else ""
             )
 
             fq = config.fq_table(config.form_54_table)
             q = f"""
-            SELECT
+            SELECT DISTINCT
                 {inc_col} AS incident_key,
                 {yr_p} AS year,
                 CAST({dt_p} AS STRING) AS date,
                 UPPER(TRIM(CAST({st_p} AS STRING))) AS state,
                 TRIM(CAST({city_p} AS STRING)) AS nearest_city_town,
+                TRIM(CAST({jtrk_p} AS STRING)) AS joint_track_type,
                 UPPER(TRIM(CAST({rr_p} AS STRING))) AS primary_railroad,
-                UPPER(TRIM(CAST({cau_p} AS STRING))) AS primary_cause_code,
+                {norm_cau_p} AS primary_cause_code,
                 CAST({desc_p} AS STRING) AS primary_cause_desc,
                 CAST({spd_p} AS DOUBLE) AS primary_reported_speed_mph,
+                TRIM(CAST({jcd_s} AS STRING)) AS secondary_joint_code,
                 UPPER(TRIM(CAST({rr_s} AS STRING))) AS secondary_railroad,
-                UPPER(TRIM(CAST({cau_s} AS STRING))) AS secondary_cause_code,
+                {norm_cau_s} AS secondary_cause_code,
                 CAST({desc_s} AS STRING) AS secondary_cause_desc,
                 CAST({spd_s} AS DOUBLE) AS secondary_reported_speed_mph,
-                (COALESCE(CAST({dmg_p} AS DOUBLE), 0) + COALESCE(CAST({dmg_s} AS DOUBLE), 0)) AS combined_damage_cost
+                (COALESCE(CAST({dmg_p} AS DOUBLE), 0) + COALESCE(CAST({dmg_s} AS DOUBLE), 0)) AS pair_damage_cost
             FROM {fq} p
             INNER JOIN {fq} s
                 ON {inc_col} = {inc_sec}
                 AND TRIM(CAST({jcd_p} AS STRING)) = '1'
-                AND TRIM(CAST({jcd_s} AS STRING)) = '2'
-            WHERE {t54} {f54_common} {mismatch_clause}
-            ORDER BY combined_damage_cost DESC
+                AND TRIM(CAST({jcd_s} AS STRING)) IN ('2', '3')
+                AND COALESCE(TRIM(CAST(p.reportkey AS STRING)), '') != COALESCE(TRIM(CAST(s.reportkey AS STRING)), 'diff')
+            WHERE {t54} {f54_geo} {f54_carrier} {mismatch_clause}
+            ORDER BY pair_damage_cost DESC
             LIMIT {safe_limit}
             """
 

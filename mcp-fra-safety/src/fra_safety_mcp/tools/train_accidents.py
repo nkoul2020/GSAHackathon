@@ -35,10 +35,10 @@ def register(mcp: FastMCP) -> None:
     ) -> Dict[str, Any]:
         """
         Replicates FRA Form 54 Train Accident Reports (portal wjun-6kqb) from Unity Catalog:
-          - include_crossings=False -> Report 2.03 (Train Accidents Not at Crossings)
-          - include_crossings=True  -> Report 3.10 (Train Accidents Including Crossings)
-          - table_view='table1_macro'    -> Deduplicated counts via jointcd = '1'
-          - table_view='table2_railroad' -> Overlapping involvement counts per railroad
+        - include_crossings=False -> Report 2.03 (Train Accidents Not at Crossings)
+        - include_crossings=True  -> Report 3.10 (Train Accidents Including Crossings)
+        - table_view='table1_macro'    -> Deduplicated macro totals (jointcd='1' when unfiltered; all carrier incidents when filtered by railroad)
+        - table_view='table2_railroad' -> Overlapping involvement counts per railroad
         """
         params: Dict[str, Any] = {}
         safe_limit = max(1, min(int(limit), 500))
@@ -112,15 +112,24 @@ def register(mcp: FastMCP) -> None:
                 dim_alias = "year"
 
             is_table2 = table_view.strip().lower() in ("table2_railroad", "table2", "railroad_overlap")
-            count_expr = (
-                f"COUNT(DISTINCT {inc_col})"
-                if is_table2
-                else f"COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1' THEN {inc_col} END)"
-            )
+            has_carrier_filter = any([
+                railroad_code,
+                parent_railroad_code,
+                railroad_class,
+                railroad_group,
+                smt,
+            ])
+
+            if is_table2 or has_carrier_filter:
+                count_expr = f"COUNT(DISTINCT {inc_col})"
+            else:
+                count_expr = f"COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1' THEN {inc_col} END)"
+
+            order_clause = "1 ASC" if dim_alias == "year" else "accident_count DESC, total_damage_cost DESC"
 
             q_total = f"""
             SELECT
-                COUNT(DISTINCT CASE WHEN TRIM(CAST({jcd_col} AS STRING)) = '1' THEN {inc_col} END) AS deduplicated_grand_total_accidents,
+                {count_expr} AS deduplicated_grand_total_accidents,
                 COUNT(DISTINCT {inc_col}) AS total_railroad_involvements,
                 COALESCE(SUM(CAST({dmg_col} AS DOUBLE)), 0) AS total_damage_cost,
                 COALESCE(SUM(CAST({k_col} AS INT)), 0) AS total_fatalities,
@@ -141,7 +150,7 @@ def register(mcp: FastMCP) -> None:
             FROM {config.fq_table(config.form_54_table)} f
             WHERE {t54} {f54_common} {f54_spec}
             GROUP BY 1
-            ORDER BY accident_count DESC, total_damage_cost DESC
+            ORDER BY {order_clause}
             LIMIT {safe_limit}
             """
 
@@ -156,7 +165,11 @@ def register(mcp: FastMCP) -> None:
             return {
                 "report": report_label,
                 "portal_reference": "https://data.transportation.gov/stories/s/wjun-6kqb",
-                "table_view": "table2_railroad (overlapping carrier counts)" if is_table2 else "table1_macro (jointcd='1' deduplicated)",
+                "table_view": (
+                    "table2_railroad (overlapping carrier counts)"
+                    if is_table2
+                    else ("table1_macro (carrier-filtered distinct incidents)" if has_carrier_filter else "table1_macro (jointcd='1' deduplicated)")
+                ),
                 "group_by": dim_alias,
                 "grand_total": grand_total,
                 "breakdown": breakdown,

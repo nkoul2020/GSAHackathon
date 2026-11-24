@@ -1,0 +1,159 @@
+{
+  "passed": 19,
+  "total": 19,
+  "all_passed": true,
+  "results": [
+    {
+      "id": "eval_01_report_1_12_system",
+      "category": "Report 1.12 System Normalization",
+      "tool": "get_report_1_12_rail_safety_overview",
+      "passed": true,
+      "elapsed_ms": 5303.9,
+      "failures": []
+    },
+    {
+      "id": "eval_02_report_1_12_geo_blank_rule",
+      "category": "49 CFR 225 Geographic Blank-Rate Rule",
+      "tool": "get_report_1_12_rail_safety_overview",
+      "passed": true,
+      "elapsed_ms": 1242.0,
+      "failures": []
+    },
+    {
+      "id": "eval_03_report_1_12_fiscal_year",
+      "category": "Federal Fiscal Year (Oct-Sep) Parity",
+      "tool": "get_report_1_12_rail_safety_overview",
+      "passed": true,
+      "elapsed_ms": 1586.5,
+      "failures": []
+    },
+    {
+      "id": "eval_04_report_2_03_cause_groups",
+      "category": "Report 2.03 Appendix C Cause Breakdown",
+      "tool": "get_train_accident_summary",
+      "passed": true,
+      "elapsed_ms": 833.3,
+      "failures": []
+    },
+    {
+      "id": "eval_05_report_2_03_table2_overlap",
+      "category": "Report 2.03 Table 2 Multi-Carrier Overlap",
+      "tool": "get_train_accident_summary",
+      "passed": true,
+      "elapsed_ms": 811.4,
+      "failures": []
+    },
+    {
+      "id": "eval_06_report_3_10_hazmat_crossings",
+      "category": "Report 3.10 Crossings + Hazmat Filter",
+      "tool": "get_train_accident_summary",
+      "passed": true,
+      "elapsed_ms": 820.5,
+      "failures": []
+    },
+    {
+      "id": "eval_07_joint_track_discrepancies",
+      "category": "Joint-Track Cause Discrepancy Audit",
+      "tool": "audit_joint_track_cause_discrepancies",
+      "passed": true,
+      "elapsed_ms": 453.0,
+      "failures": []
+    },
+    {
+      "id": "eval_08_crossing_warning_device_2_08",
+      "category": "Form 57 Report 2.08 Warning Devices",
+      "tool": "analyze_highway_rail_crossings",
+      "passed": true,
+      "elapsed_ms": 779.9,
+      "failures": []
+    },
+    {
+      "id": "eval_09_crossing_highway_user_5_14",
+      "category": "Form 57 Report 5.14 Highway Users",
+      "tool": "analyze_highway_rail_crossings",
+      "passed": true,
+      "elapsed_ms": 896.8,
+      "failures": []
+    },
+    {
+      "id": "eval_10_crossing_usdot_hotspots",
+      "category": "USDOT Crossing Inventory Hotspots",
+      "tool": "analyze_highway_rail_crossings",
+      "passed": true,
+      "elapsed_ms": 773.9,
+      "failures": []
+    },
+    {
+      "id": "eval_11_metro_corridor_synthesis",
+      "category": "Cross-Portal Metro Corridor Safety",
+      "tool": "analyze_metro_corridor_safety",
+      "passed": true,
+      "elapsed_ms": 1233.5,
+      "failures": []
+    },
+    {
+      "id": "eval_12_delta_governance_audit",
+      "category": "Unity Catalog Delta Version Governance",
+      "tool": "audit_delta_table_versions",
+      "passed": true,
+      "elapsed_ms": 1981.7,
+      "failures": []
+    },
+    {
+      "id": "eval_13_walk_across_forms",
+      "category": "Cross-Form Walk (Forms 54, 57 & 55a)",
+      "tool": "walk_across_fra_forms",
+      "passed": true,
+      "elapsed_ms": 1208.2,
+      "failures": []
+    },
+    {
+      "id": "eval_14_custom_cross_form_sql",
+      "category": "Ad-Hoc Cross-Form SQL Join (54 + 55a + 57)",
+      "tool": "run_fra_sql_query",
+      "passed": true,
+      "elapsed_ms": 416.4,
+      "failures": []
+    },
+    {
+      "id": "eval_15_stb_1246_employment",
+      "category": "STB Part 1246 Class I Employment & AAR Crosswalk",
+      "tool": "analyze_class1_employment_and_safety",
+      "passed": true,
+      "elapsed_ms": 2139.1,
+      "failures": []
+    },
+    {
+      "id": "eval_16_stb_fra_cross_sql",
+      "category": "STB 1246 + FRA Form 54 Cross-Agency SQL Join",
+      "tool": "run_fra_sql_query",
+      "passed": true,
+      "elapsed_ms": 392.1,
+      "failures": []
+    },
+    {
+      "id": "eval_17_bnsf_report_3_10_parity",
+      "category": "FRA Report 3.10 Carrier Parity (BNSF 2021 = 306)",
+      "tool": "get_train_accident_summary",
+      "passed": true,
+      "elapsed_ms": 868.9,
+      "failures": []
+    },
+    {
+      "id": "eval_18_carrier_joint_cause_audit",
+      "category": "Carrier-Filtered Joint-Track Cause Audit",
+      "tool": "audit_joint_track_cause_discrepancies",
+      "passed": true,
+      "elapsed_ms": 391.3,
+      "failures": []
+    },
+    {
+      "id": "eval_19_sql_read_only_guardrail",
+      "category": "Security Guardrail - Block DDL/Write SQL",
+      "tool": "run_fra_sql_query",
+      "passed": true,
+      "elapsed_ms": 1.9,
+      "failures": []
+    }
+  ]
+}

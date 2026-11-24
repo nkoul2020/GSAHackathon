@@ -118,6 +118,8 @@ def register(mcp: FastMCP) -> None:
                 report_name = "FRA Report 1.11 - Highway-Rail Grade Crossing Overview"
                 extra_cols = ""
 
+            order_clause = "1 ASC" if dim_label == "year" else "incident_count DESC, fatalities DESC"
+
             q_totals = f"""
             SELECT
                 COUNT(*) AS total_incidents,
@@ -138,7 +140,7 @@ def register(mcp: FastMCP) -> None:
             FROM {config.fq_table(config.form_57_table)} c
             WHERE {t57} {f57_common} {f57_spec}
             GROUP BY 1
-            ORDER BY incident_count DESC, fatalities DESC
+            ORDER BY {order_clause}
             LIMIT {safe_limit}
             """
 
